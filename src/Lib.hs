@@ -1,3 +1,3 @@
 module Lib where
 
-import NotAWoWKiller.Model.Skill
+import NotAWoWKiller.Model
