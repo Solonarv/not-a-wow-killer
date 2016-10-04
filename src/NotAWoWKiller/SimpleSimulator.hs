@@ -8,6 +8,10 @@ module NotAWoWKiller.SimpleSimulator where
 
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
+import Data.Default
+
+import Data.IORef
+import System.IO.Unsafe (unsafePerformIO)
 
 import Control.Lens
 import Control.Monad.Freer
@@ -20,8 +24,11 @@ data World = World {
     _worldUnits :: IntMap Unit
     }
 
+instance Default World where def = World IntMap.empty
+
 worldUnits :: Lens' World (IntMap Unit)
 worldUnits f w = fmap (\us -> w {_worldUnits = us}) (f $ _worldUnits w)
+
 
 runReadWorld :: World -> UnitID -> Eff (ReadWorld ': r)  w -> Eff r w
 runReadWorld world caster (Val a) = return a
@@ -69,4 +76,46 @@ runReadWriteWorld caster target (E u q) = case decomp u of
                     --modify $ worldUnits . at uid . _Just . unitActiveEffects . at (modinst ^. miID) .~ Nothing
                     qApp q hasMod
                 Nothing -> qApp q False
-            
+
+-- Spiders (a.k.a. mutable global state) beyond this point
+
+globalWorld :: IORef World
+globalWorld = unsafePerformIO (newIORef def)
+{-# NOINLINE globalWorld #-}
+
+resetWorld :: IO ()
+resetWorld = writeIORef globalWorld def
+
+globalCaster :: IORef UnitID
+globalCaster = unsafePerformIO (newIORef 0)
+{-# NOINLINE globalCaster #-}
+
+setCaster :: UnitID -> IO ()
+setCaster uid = writeIORef globalCaster uid
+
+globalTarget :: IORef (Maybe UnitID)
+globalTarget = unsafePerformIO (newIORef Nothing)
+{-# NOINLINE globalTarget #-}
+
+setTarget :: UnitID -> IO ()
+setTarget uid = writeIORef globalTarget (Just uid)
+
+clearTarget :: IO ()
+clearTarget = writeIORef globalTarget Nothing
+
+rWorld :: Eff '[ReadWorld] w -> IO w
+rWorld comp = do
+    caster <- readIORef globalCaster
+    world <- readIORef globalWorld
+    return $ run $ runReadWorld world caster comp
+
+rwWorld :: Eff '[ReadWorld, WriteWorld] w -> IO w
+rwWorld comp = do
+    caster <- readIORef globalCaster
+    target <- readIORef globalTarget
+    world <- readIORef globalWorld
+    let scomp = runReadWriteWorld caster target comp
+    let (nw, res) = run $ runState scomp world
+    writeIORef globalWorld world 
+    return res
+
