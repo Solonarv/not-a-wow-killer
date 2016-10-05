@@ -18,6 +18,7 @@ import Control.Monad.Freer
 import Control.Monad.Freer.Internal
 import Control.Monad.Freer.State
 
+import Control.Monad.Freer.Extensions
 import NotAWoWKiller.Model
 
 data World = World {
@@ -77,45 +78,60 @@ runReadWriteWorld caster target (E u q) = case decomp u of
                     qApp q hasMod
                 Nothing -> qApp q False
 
+addState :: Eff (a ': b ': r) w -> Eff (a ': b ': State s ': r) w
+addState = mapEffU $ unionUnder (unionUnder weaken)
+
 -- Spiders (a.k.a. mutable global state) beyond this point
 
 globalWorld :: IORef World
 globalWorld = unsafePerformIO (newIORef def)
 {-# NOINLINE globalWorld #-}
 
-resetWorld :: IO ()
-resetWorld = writeIORef globalWorld def
+setGlobalWorld :: World -> IO ()
+setGlobalWorld w = writeIORef globalWorld w
+
+getGlobalWorld :: IO World
+getGlobalWorld = readIORef globalWorld
+
+resetGlobalWorld :: IO ()
+resetGlobalWorld = writeIORef globalWorld def
 
 globalCaster :: IORef UnitID
 globalCaster = unsafePerformIO (newIORef 0)
 {-# NOINLINE globalCaster #-}
 
-setCaster :: UnitID -> IO ()
-setCaster uid = writeIORef globalCaster uid
+setGlobalCaster :: UnitID -> IO ()
+setGlobalCaster uid = writeIORef globalCaster uid
+
+getGlobalCaster :: IO UnitID
+getGlobalCaster = readIORef globalCaster
 
 globalTarget :: IORef (Maybe UnitID)
 globalTarget = unsafePerformIO (newIORef Nothing)
 {-# NOINLINE globalTarget #-}
 
-setTarget :: UnitID -> IO ()
-setTarget uid = writeIORef globalTarget (Just uid)
+setGlobalTarget :: UnitID -> IO ()
+setGlobalTarget uid = writeIORef globalTarget (Just uid)
 
-clearTarget :: IO ()
-clearTarget = writeIORef globalTarget Nothing
+clearGlobalTarget :: IO ()
+clearGlobalTarget = writeIORef globalTarget Nothing
+
+getGlobalTarget :: IO (Maybe UnitID)
+getGlobalTarget = readIORef globalTarget
 
 rWorld :: Eff '[ReadWorld] w -> IO w
 rWorld comp = do
-    caster <- readIORef globalCaster
-    world <- readIORef globalWorld
+    caster <- getGlobalCaster
+    world <- getGlobalWorld
     return $ run $ runReadWorld world caster comp
 
 rwWorld :: Eff '[ReadWorld, WriteWorld] w -> IO w
 rwWorld comp = do
-    caster <- readIORef globalCaster
-    target <- readIORef globalTarget
-    world <- readIORef globalWorld
-    let scomp = runReadWriteWorld caster target comp
-    let (nw, res) = run $ runState scomp world
-    writeIORef globalWorld world 
+    caster <- getGlobalCaster
+    target <- getGlobalTarget
+    world <- getGlobalWorld
+    let scomp = runReadWriteWorld caster target (addState comp)
+    let (res, nw) = run $ runState scomp world
+    setGlobalWorld world 
     return res
 
